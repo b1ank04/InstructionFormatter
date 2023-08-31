@@ -1,0 +1,5 @@
+spring:
+  datasource:
+    url: jdbc:mysql://${CLOUDSQL_HOST:127.0.0.1}:${CLOUDSQL_PORT:3310}/${CLOUDSQL_DB:anc_db}?useSSL=false
+    username: ${CLOUDSQL_USER:mark.shmarov}
+    password: ${CLOUDSQL_PASS:oiphaich5OhK8ohyoisaep0m}
