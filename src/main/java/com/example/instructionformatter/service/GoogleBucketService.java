@@ -3,6 +3,8 @@ package com.example.instructionformatter.service;
 import com.google.auth.Credentials;
 import com.google.auth.oauth2.GoogleCredentials;
 import com.google.cloud.storage.*;
+import org.jsoup.Jsoup;
+import org.jsoup.nodes.Document;
 import org.springframework.stereotype.Service;
 
 import java.io.File;
@@ -21,6 +23,12 @@ public class GoogleBucketService {
 
     public static final String UA_PATH = "";
     public static final String RU_PATH = "";
+
+
+
+
+
+
 
     public void upload() {
         File ruDirectory = new File("C:\\Users\\Mark\\Desktop\\InstructionFormatter\\instructions\\ru");
