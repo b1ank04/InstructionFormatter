@@ -9,9 +9,6 @@ import org.jsoup.nodes.Document;
 @AllArgsConstructor
 @NoArgsConstructor
 public class InstructionDto {
-    private String productId;
-    private String linkRu;
-    private String linkUa;
-    private Document documentRu;
-    private Document documentUa;
+    private String name;
+    private Document document;
 }

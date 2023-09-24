@@ -34,7 +34,7 @@ public class DocumentService {
     public static final String UA_PATH = "C:\\Users\\Mark\\Desktop\\InstructionFormatter\\instructions\\ua\\";
     public static final String RU_PATH = "C:\\Users\\Mark\\Desktop\\InstructionFormatter\\instructions\\ru\\";
 
-    private static final List<String> HEADERS_UA = new ArrayList<>(List.of("Склад лікарського засобу", "Склад", "Лікарська форма", "Фармакотерапевтична група", "Фармакологічні властивості",
+    public static final List<String> HEADERS_UA = new ArrayList<>(List.of("Склад лікарського засобу", "Склад", "Лікарська форма", "Фармакотерапевтична група", "Фармакологічні властивості",
             "Показання для застосування", "Показання", "Протипоказання", "Взаємодія з іншими лікарськими засобами та інші види взаємодій", "Особливості застосування", "Особливості щодо застосування",
             "Застосування у період вагітності або годування груддю", "Здатність впливати на швидкість реакції при керуванні автотранспортом або іншими механізмами",
             "Спосіб застосування та дози", "Передозування", "Побічні ефекти", "Побічні реакції", "Особливі заходи безпеки", "Належні заходи безпеки при застосуванні",
@@ -52,26 +52,71 @@ public class DocumentService {
         Document document = getDocument(link);
         Elements headers = document.getElementsByTag("h2");
         headers.forEach(Node::unwrap);
-        Element root = document.select("div").first();
+        Element root = getRoot(document);
         List<TextNode> textNodes = root.textNodes();
         for (TextNode textNode : textNodes) {
-            // Находим предыдущий элемент с тегом
-            Element previousElement = findPreviousElementWithTag(textNode);
+            if (textNode.text().length() > 1) {
+                // Находим предыдущий элемент с тегом
+                Element previousElement = findPreviousElementWithTag(textNode);
 
-            // Если такой элемент существует, добавляем текстовый узел к нему
-            if (previousElement != null) {
-                previousElement.append(" ").append(textNode.text());
-                // Удаляем текстовый узел после добавления его содержимого
+                // Если такой элемент существует, добавляем текстовый узел к нему
+                if (previousElement != null) {
+                    previousElement.append(" ").append(textNode.text());
+                    // Удаляем текстовый узел после добавления его содержимого
+                    textNode.remove();
+                }
+            } else {
                 textNode.remove();
             }
         }
-        return document;
+        textNodes = root.textNodes();
+        for (TextNode textNode : textNodes) {
+            Element element = new Element("p").text(textNode.text());
+            textNode.before(element);
+            textNode.remove();
+        }
+        removeEmptyElements(root);
+        String html = root.outerHtml();
+        html = html.replace(" .", ".").replace("..", ".").replace(".<", "<");
+        html = removeSecondPart(html);
+        //removeWhitespaces(root);
+        return Jsoup.parse(html);
+    }
+
+    private String removeSecondPart(String html) {
+        if (html.indexOf("ІНСТРУКЦІЯ") != html.lastIndexOf("ІНСТРУКЦІЯ")) {
+            return html.substring(0, html.lastIndexOf("ІНСТРУКЦІЯ"));
+        } else {
+            return html;
+        }
+    }
+
+    private void removeEmptyElements(Element root) {
+        Elements allElements = root.getAllElements();
+
+        // Перебор элементов и удаление пустых
+        for (Element element : allElements) {
+            if (element.text().trim().isEmpty()) {
+                element.remove();
+            }
+        }
+
+    }
+
+    private Element getRoot(Document document) {
+        if (!document.getElementsByTag("div").isEmpty()) {
+            return document.select("div").first();
+        } else if (!document.getElementsByTag("body").isEmpty()) {
+            return document.select("body").first();
+        } else {
+            return document;
+        }
     }
 
     private Document getDocument(String link) throws IOException {
         Document document = Jsoup.connect(link).ignoreContentType(true).get();
         String html = document.outerHtml();
-        html = html.replace("<p>&nbsp;</p>", "").replace("<p></p>", "");
+        html = html.replace("<p>&nbsp;</p>", "");
         return Jsoup.parse(html);
     }
 
@@ -105,7 +150,20 @@ public class DocumentService {
             if (flag) usedHeaders.add(header);
         }
         copiedHeaders.removeAll(usedHeaders);
+        finalRefactor(document);
         return document;
+    }
+
+    private void finalRefactor(Document document) {
+        Element root = getRoot(document);
+        Elements elements = root.getAllElements();
+        for (int i = 0; i < elements.size() - 2; ++i) {
+            if (elements.get(i).tagName().equals("h2") && elements.get(i+1).tagName().equals("h2")) {
+                Element third = elements.get(i+2);
+                third.text(elements.get(i+1).text() + " " + third.text());
+                elements.get(i+1).remove();
+            }
+        }
     }
 
     private boolean fullSentenceUpdate(Document document, String header) {
@@ -113,8 +171,8 @@ public class DocumentService {
         elements.addAll(document.select(String.format("p:contains(%s:)", header)));
         AtomicBoolean atomicBoolean = new AtomicBoolean(false);
         elements.forEach(element -> {
-            if (!element.tagName().equals("h2")) {
-                String pText = element.text();
+            String pText = element.text();
+            if (!element.tagName().equals("h2") && pText.contains(header)) {
                 // Создаем новый элемент <h2> с текстом "Протипоказання"
                 Element h2Element = new Element("h2").text(header);
                 element.before(h2Element);
@@ -129,9 +187,9 @@ public class DocumentService {
         Elements elements = document.select(String.format("p:contains(. %s)", header));
         AtomicBoolean atomicBoolean = new AtomicBoolean(false);
         elements.forEach(element -> {
-            if (!element.tagName().equals("h2")) {
+            String pText = element.text();
+            if (!element.tagName().equals("h2") && pText.contains(header) && !Character.isLetter(pText.charAt(pText.indexOf(". " + header) + 1 + header.length()))) {
                 // Извлекаем текст из элемента <p>
-                String pText = element.text();
                 // Создаем новый элемент <h2> с текстом "Протипоказання"
                 Element h2Element = new Element("h2").text(header);
                 // Вставляем новый элемент перед элементом <p>
@@ -154,85 +212,89 @@ public class DocumentService {
         AtomicBoolean atomicBoolean = new AtomicBoolean(false);
         elements.forEach(element -> {
             String text = element.text();
-            if (!element.tagName().equals("h2") && (text.indexOf(header) + header.length() == text.length())) {
+            if (!element.tagName().equals("h2") && text.contains(header) && (text.indexOf(header) + header.length() == text.length())) {
 
                 // Создаем новый элемент <h2> с текстом "Протипоказання"
                 Element h2Element = new Element("h2").text(header);
                 // Вставляем новый элемент перед элементом <p>
                 element.after(h2Element);
-                element.text(text.replace( header, ""));
+                element.text(text.replace(header, ""));
                 atomicBoolean.set(true);
+            } else if (!element.tagName().equals("h2") && text.contains(header) && text.indexOf(header) == 0 && !Character.isLetter(text.charAt(header.length())) && text.charAt(header.length()) != ',') {
+                Element h2Element = new Element("h2").text(header);
+                element.before(h2Element);
+                element.text(text.replace(header, ""));
             }
         });
         return atomicBoolean.get();
     }
 
 
-    public void findCorruptedInstructions() {
-        List<InstructionDto> dtoList = jdbcNativeRepository.findInstructions();
-        System.out.println("All found");
-        ExecutorService executorService = Executors.newFixedThreadPool(16);
-        executorService.execute(() -> {
-            for (InstructionDto instructionDto : dtoList) {
-                Document ua = null;
-                try {
-                    ua = changeTags(instructionDto.getLinkUa());
-                } catch (IOException ignored) {}
-                System.out.println("ua tags changed");
-                Document ru = null;
-                try {
-                    ru = changeTags(instructionDto.getLinkRu());
-                } catch (IOException ignored) {}
-                System.out.println("ru tags changed");
-                save(instructionDto, ua, ru);
-            }
-        });
-        executorService.shutdown();
+//    public void findCorruptedInstructions() {
+//        List<InstructionDto> dtoList = jdbcNativeRepository.findInstructions();
+//        System.out.println("All found");
+//        ExecutorService executorService = Executors.newFixedThreadPool(16);
+//        executorService.execute(() -> {
+//            for (InstructionDto instructionDto : dtoList) {
+//                Document ua = null;
+//                try {
+//                    ua = changeTags(instructionDto.getLinkUa());
+//                } catch (IOException ignored) {}
+//                System.out.println("ua tags changed");
+//                Document ru = null;
+//                try {
+//                    ru = changeTags(instructionDto.getLinkRu());
+//                } catch (IOException ignored) {}
+//                System.out.println("ru tags changed");
+//                save(instructionDto, ua, ru);
+//            }
+//        });
+//        executorService.shutdown();
+//
+//    }
 
-    }
 
-
-    public void findAllHeaders() throws Exception {
-        List<InstructionDto> dtoList = jdbcNativeRepository.findInstructions();
-        System.out.println("All found");
-        ExecutorService executorService = Executors.newFixedThreadPool(16);
-        Set<String> resultUa = new HashSet<>();
-        Set<String> resultRu = new HashSet<>();
-        executorService.execute(() -> {
-            for (InstructionDto instructionDto : dtoList) {
-                try {
-                    resultUa.addAll(findHeadersInDocument(instructionDto.getLinkUa()));
-                    System.out.println(instructionDto.getLinkUa());
-                } catch (Exception ignored) {
-                }
-                try {
-                    resultRu.addAll(findHeadersInDocument(instructionDto.getLinkRu()));
-                    System.out.println(instructionDto.getLinkRu());
-                } catch (Exception ignored) {
-                }
-            }
-        });
-
-        executorService.shutdown();
-
-        try {
-            // Wait for the tasks to complete or a timeout of 5 seconds
-            if (executorService.awaitTermination(1, TimeUnit.HOURS)) {
-                List<String[]> uaLines = resultUa.stream().map(string -> new String[]{string}).toList();
-
-                List<String[]> ruLines = resultRu.stream().map(string -> new String[]{string}).toList();
-                csvService.writeAllLines(uaLines, "C:\\Users\\Mark\\Desktop\\InstructionFormatter\\ua_headers.csv");
-
-                csvService.writeAllLines(ruLines, "C:\\Users\\Mark\\Desktop\\InstructionFormatter\\ru_headers.csv");
-            } else {
-                // Handle the case where the timeout was reached
-                System.out.println("Timeout reached while waiting for tasks to complete.");
-            }
-        } catch (InterruptedException e) {
-            // Handle InterruptedException
-            System.err.println("ExecutorService was interrupted while waiting for termination.");
-        }
-    }
+//    public void findAllHeaders() throws Exception {
+//        List<InstructionDto> dtoList = jdbcNativeRepository.findInstructions();
+//        System.out.println("All found");
+//        ExecutorService executorService = Executors.newFixedThreadPool(16);
+//        Set<String> resultUa = new HashSet<>();
+//        Set<String> resultRu = new HashSet<>();
+//        executorService.execute(() -> {
+//            for (InstructionDto instructionDto : dtoList) {
+//                try {
+//                    resultUa.addAll(findHeadersInDocument(instructionDto.getLinkUa()));
+//                    System.out.println(instructionDto.getLinkUa());
+//                } catch (Exception ignored) {
+//                }
+//                try {
+//                    resultRu.addAll(findHeadersInDocument(instructionDto.getLinkRu()));
+//                    System.out.println(instructionDto.getLinkRu());
+//                } catch (Exception ignored) {
+//                }
+//            }
+//        });
+//
+//        executorService.shutdown();
+//
+//        try {
+//            // Wait for the tasks to complete or a timeout of 5 seconds
+//            if (executorService.awaitTermination(1, TimeUnit.HOURS)) {
+//                List<String[]> uaLines = resultUa.stream().map(string -> new String[]{string}).toList();
+//
+//                List<String[]> ruLines = resultRu.stream().map(string -> new String[]{string}).toList();
+//                csvService.writeAllLines(uaLines, "C:\\Users\\Mark\\Desktop\\InstructionFormatter\\ua_headers.csv");
+//
+//                csvService.writeAllLines(ruLines, "C:\\Users\\Mark\\Desktop\\InstructionFormatter\\ru_headers.csv");
+//            } else {
+//                // Handle the case where the timeout was reached
+//                System.out.println("Timeout reached while waiting for tasks to complete.");
+//            }
+//        } catch (InterruptedException e) {
+//            // Handle InterruptedException
+//            System.err.println("ExecutorService was interrupted while waiting for termination.");
+//        }
+//    }
 
     private Set<String> findHeadersInDocument(String link) throws IOException {
         Document document = Jsoup.connect(link).ignoreContentType(true).get();
@@ -242,41 +304,41 @@ public class DocumentService {
         return result;
     }
 
-    public void updateAndSaveDocuments() {
-        List<InstructionDto> dtoList = jdbcNativeRepository.findInstructions();
-        System.out.println("All found");
-        ExecutorService executorService = Executors.newFixedThreadPool(16);
-        executorService.execute(() -> {
-            for (InstructionDto instructionDto : dtoList) {
-                Document ua = null;
-                try {
-                    ua = updateDocument(instructionDto.getLinkUa(), "ua");
-                } catch (IOException ignored) {}
-                System.out.println("ua document updated");
-                Document ru = null;
-                try {
-                    ru = updateDocument(instructionDto.getLinkRu(), "ru");
-                } catch (IOException ignored) {}
-                System.out.println("ru document updated");
-
-                save(instructionDto, ua, ru);
-            }
-        });
-        executorService.shutdown();
-    }
-
-    private void save(InstructionDto instructionDto, Document ua, Document ru) {
-        if (ua != null) {
-            try {
-                saveDocument(ua, UA_PATH + instructionDto.getLinkUa().substring(instructionDto.getLinkUa().lastIndexOf("/") + 1));
-            } catch (IOException ignored) {}
-        }
-        if (ru != null) {
-            try {
-                saveDocument(ru, RU_PATH + instructionDto.getLinkRu().substring(instructionDto.getLinkRu().lastIndexOf("/") + 1));
-            } catch (IOException ignored) {}
-        }
-    }
+//    public void updateAndSaveDocuments() {
+//        List<InstructionDto> dtoList = jdbcNativeRepository.findInstructions();
+//        System.out.println("All found");
+//        ExecutorService executorService = Executors.newFixedThreadPool(16);
+//        executorService.execute(() -> {
+//            for (InstructionDto instructionDto : dtoList) {
+//                Document ua = null;
+//                try {
+//                    ua = updateDocument(instructionDto.getLinkUa(), "ua");
+//                } catch (IOException ignored) {}
+//                System.out.println("ua document updated");
+//                Document ru = null;
+//                try {
+//                    ru = updateDocument(instructionDto.getLinkRu(), "ru");
+//                } catch (IOException ignored) {}
+//                System.out.println("ru document updated");
+//
+//                save(instructionDto, ua, ru);
+//            }
+//        });
+//        executorService.shutdown();
+//    }
+//
+//    private void save(InstructionDto instructionDto, Document ua, Document ru) {
+//        if (ua != null) {
+//            try {
+//                saveDocument(ua, UA_PATH + instructionDto.getLinkUa().substring(instructionDto.getLinkUa().lastIndexOf("/") + 1));
+//            } catch (IOException ignored) {}
+//        }
+//        if (ru != null) {
+//            try {
+//                saveDocument(ru, RU_PATH + instructionDto.getLinkRu().substring(instructionDto.getLinkRu().lastIndexOf("/") + 1));
+//            } catch (IOException ignored) {}
+//        }
+//    }
 
 
     private Document updateDocument(String link, String lang) throws IOException {
