@@ -15,6 +15,7 @@ import org.springframework.stereotype.Service;
 import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.sql.SQLOutput;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -393,8 +394,12 @@ public class DocumentService {
     }
 
     public void saveDocument(Document doc, String path) throws IOException {
-        File f = new File(path);
-        FileUtils.writeStringToFile(f, doc.outerHtml(), StandardCharsets.UTF_8);
-        System.out.println(path);
+        try {
+            File f = new File(path);
+            FileUtils.writeStringToFile(f, doc.outerHtml(), StandardCharsets.UTF_8);
+            System.out.println(path);
+        } catch (Exception e) {
+            System.out.println("Null save");
+        }
     }
 }

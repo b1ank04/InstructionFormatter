@@ -1,5 +1,6 @@
 package com.example.instructionformatter.service.v2;
 
+import com.example.instructionformatter.InstructionFormatterApplication;
 import com.example.instructionformatter.model.InstructionDto;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
@@ -12,6 +13,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static com.example.instructionformatter.service.DocumentService.HEADERS_UA;
@@ -19,37 +21,69 @@ import static com.example.instructionformatter.service.DocumentService.HEADERS_U
 @Component
 public class V2DocumentService {
 
-    public List<InstructionDto> parseDocuments(String path) throws IOException {
+    public List<String> parseNames(String path) {
+        File root = new File(path);
+        List<File> documents = List.of(Objects.requireNonNull(root.listFiles()));
+        return documents.stream().map(File::getName).toList();
+    }
+
+    public List<InstructionDto> parseDocuments(String path, ExecutorService executorService) {
         File root = new File(path);
         List<File> documents = List.of(Objects.requireNonNull(root.listFiles()));
         List<InstructionDto> instructionDtoList = new ArrayList<>();
-        for (File document : documents) {
-            InstructionDto instructionDto = new InstructionDto();
-            instructionDto.setDocument(Jsoup.parse(document));
-            instructionDto.setName(document.getName());
-            instructionDtoList.add(instructionDto);
-        }
+        executorService.execute(() -> {
+            for (File document : documents) {
+                InstructionDto instructionDto = new InstructionDto();
+                try {
+                    instructionDto.setDocument(Jsoup.parse(document));
+                    instructionDto.setName(document.getName());
+                    System.out.println(instructionDto.getName());
+                } catch (IOException e) {
+                    System.out.println("Exception");
+                }
+                instructionDtoList.add(instructionDto);
+            }
+        });
+
         return instructionDtoList;
     }
 
-    public Document proceedDocument(String link) throws IOException {
-        Document document = Jsoup.connect(link).ignoreContentType(true).get();
-        document.getAllElements().forEach(Element::clearAttributes);
-        document = clearGarbage(document);
-        document.getElementsByTag("h1").tagName("h2");
-        document.getElementsByTag("h2").tagName("p");
-        selectHeaders(document);
-        Element meta = new Element("meta").attr("charset", "utf-8");
-        Objects.requireNonNull(document.getElementsByTag("head").first()).appendChild(meta);
-        return document;
+    public void proceedDocument(InstructionDto dto)  {
+        try {
+            Document document = dto.getDocument();
+            Elements elements = document.getAllElements();
+            elements.forEach(Element::clearAttributes);
+//        for (Element element : elements) {
+//            Element parent = element.parent();
+//            if (parent.tagName().equals("div") || parent.tagName().equals("p")) {
+//                parent.unwrap();
+//            }
+//        }
+
+            document = clearGarbage(document);
+            document.getElementsByTag("h1").tagName("h2");
+            document.getElementsByTag("h2").tagName("p");
+            selectHeaders(document);
+            Element meta = new Element("meta").attr("charset", "utf-8");
+            Objects.requireNonNull(document.getElementsByTag("head").first()).appendChild(meta);
+            dto.setDocument(document);
+            System.out.println(dto.getName());
+        } catch (Exception e) {
+            System.out.println("Exception: " + dto);
+        }
     }
 
 
 
     public void selectHeaders(Document document) {
-        addHeaders(HEADERS_UA);
-        List<String> headersCopy = HEADERS_UA;
+        List<String> headersCopy = new ArrayList<>(HEADERS_UA);
+        addHeaders(headersCopy);
         List<String> usedHeaders = new ArrayList<>();
+        for (String header : headersCopy) {
+            boolean flag = endSentenceUpdate(document, header);
+            if (flag) usedHeaders.add(header);
+        }
+        headersCopy.removeAll(usedHeaders);
         for (String header : headersCopy) {
             boolean flag = fullSentenceUpdate(document, header);
             if (flag) usedHeaders.add(header);
@@ -63,19 +97,6 @@ public class V2DocumentService {
     }
 
     private Document clearGarbage(Document document) {
-        clearDivs(document);
-        String html = document.outerHtml().replace("<span>", "")
-                .replace("</span>", "")
-                .replace("<o:p>", "")
-                .replace("</o:p>", "")
-                .replace("&nbsp;", "")
-                .replace("<st1:personname>", "")
-                .replace("</st1:personname>", "")
-                .replace("<b>", "")
-                .replace("</b>", "")
-                .replace("<i>", "")
-                .replace("</i>", "");
-        document = Jsoup.parse(html);
         Elements attributeLess = document.getElementsByTag("li");
         attributeLess.forEach(element -> {
             try {
@@ -86,10 +107,10 @@ public class V2DocumentService {
                 element.unwrap();
             }
         });
-        Elements emptyElements = document.select(":matches(^[\\s\\n]*$)");
+        List<Element> emptyElements = document.select(":matches(^[\\s\\n]*$)").stream().filter(element -> !element.tagName().equals("br")).toList();
         emptyElements.forEach(Element::remove);
 
-        String[] allowedTags = {"p", "div", "table", "tr", "td", "ul", "ol", "h1", "h2", "h3", "h4", "h5", "h6"};
+        String[] allowedTags = {"p", "div", "table", "tr", "td", "ul", "ol", "li", "h1", "h2", "h3", "h4", "h5", "h6", "br"};
 
         String pattern = String.format("</?(?!%s)\\w+.*?>", String.join("|", allowedTags));
         String cleanedHtml = document.outerHtml().replaceAll(pattern, "");
@@ -116,13 +137,39 @@ public class V2DocumentService {
         }
     }
 
-    private boolean fullSentenceUpdate(Document document, String header) {
-        Elements elements = document.select(String.format("p:contains(%s.)", header));
-        elements.addAll(document.select(String.format("p:contains(%s:)", header)));
+    private boolean endSentenceUpdate(Document document, String header) {
+        Elements elements = document.select(String.format(":contains(. %s)", header));
+        elements.addAll(document.select(String.format(":contains(.%s)", header)));
         AtomicBoolean atomicBoolean = new AtomicBoolean(false);
         elements.forEach(element -> {
             String pText = element.text();
             if (!element.tagName().equals("h2") && pText.contains(header)) {
+                // Извлекаем текст из элемента <p>
+                // Создаем новый элемент <h2> с текстом "Протипоказання"
+                Element h2Element = new Element("h2").text(header);
+                // Вставляем новый элемент перед элементом <p>
+                element.after(h2Element);
+                boolean elementCase = pText.contains(". " + header);
+                int index = elementCase ? pText.indexOf(". " + header) : pText.indexOf("." + header);
+                String textAfter = pText.substring(index + header.length() + (elementCase ? 2 : 1));
+                Element after = new Element("p").text(textAfter);
+                h2Element.after(after);
+                // Удаляем текст "Протипоказання" из элемента <p>
+                element.text(pText.replace(". " + header + textAfter, ". ").trim());
+                atomicBoolean.set(true);
+            }
+        });
+        return atomicBoolean.get();
+
+    }
+
+    private boolean fullSentenceUpdate(Document document, String header) {
+        Elements elements = document.select(String.format(":contains(%s.)", header));
+        elements.addAll(document.select(String.format(":contains(%s:)", header)));
+        AtomicBoolean atomicBoolean = new AtomicBoolean(false);
+        elements.forEach(element -> {
+            String pText = element.text();
+            if (pText.contains(header)) {
                 Element h2Element = new Element("h2").text(header);
                 element.before(h2Element);
                 element.text(pText.replace(header + ".", "")
